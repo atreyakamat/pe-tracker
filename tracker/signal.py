@@ -25,6 +25,11 @@ class Signal:
     max: float
     n_points: int
     lookback_years: int
+    pb: float | None = None
+    div_yield: float | None = None
+    pb_percentile: float | None = None
+    dy_percentile: float | None = None   # percentile of dividend yield (high yield = cheap)
+    composite: float | None = None       # 0-100 "richness": mean of PE pct, PB pct, 100 - yield pct
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -35,6 +40,15 @@ def percentile_rank(values: list[float], x: float) -> float:
     if not values:
         raise ValueError("no values")
     return 100.0 * sum(1 for v in values if v <= x) / len(values)
+
+
+def _metric_pct(win: list[dict], field: str) -> float | None:
+    """Percentile of today's value of `field` within the window; None if today's value is missing."""
+    today_v = win[-1].get(field)
+    vals = [r[field] for r in win if r.get(field) is not None]
+    if today_v is None or len(vals) < MIN_POINTS:
+        return None
+    return percentile_rank(vals, today_v)
 
 
 def window(rows: list[dict], years: int = LOOKBACK_YEARS) -> list[dict]:
@@ -65,6 +79,9 @@ def compute_signal(rows: list[dict], years: int = LOOKBACK_YEARS) -> Signal:
     sd = pstdev(pes)
     z = (today["pe"] - mean(pes)) / sd if sd else 0.0
     pct = percentile_rank(pes, today["pe"])
+    pb_pct = _metric_pct(win, "pb")
+    dy_pct = _metric_pct(win, "div_yield")
+    parts = [pct] + ([pb_pct] if pb_pct is not None else []) + ([100 - dy_pct] if dy_pct is not None else [])
     return Signal(
         date=today["date"],
         pe=today["pe"],
@@ -77,4 +94,9 @@ def compute_signal(rows: list[dict], years: int = LOOKBACK_YEARS) -> Signal:
         max=max(pes),
         n_points=len(pes),
         lookback_years=years,
+        pb=today.get("pb"),
+        div_yield=today.get("div_yield"),
+        pb_percentile=None if pb_pct is None else round(pb_pct, 1),
+        dy_percentile=None if dy_pct is None else round(dy_pct, 1),
+        composite=round(sum(parts) / len(parts), 1),
     )

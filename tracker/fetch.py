@@ -76,17 +76,19 @@ def parse_niftyindices(payload: dict) -> list[dict]:
     return out
 
 
-def fetch_niftyindices(start: date, end: date, session: requests.Session | None = None) -> list[dict]:
+def fetch_niftyindices(
+    start: date, end: date, index_name: str = INDEX_NAME, session: requests.Session | None = None
+) -> list[dict]:
     s = session or requests.Session()
     rows: dict[str, dict] = {}
     cursor = start
     while cursor <= end:
         chunk_end = min(cursor + timedelta(days=CHUNK_DAYS), end)
         cinfo = {
-            "name": INDEX_NAME,
+            "name": index_name,
             "startDate": cursor.strftime("%d-%b-%Y"),
             "endDate": chunk_end.strftime("%d-%b-%Y"),
-            "indexName": INDEX_NAME,
+            "indexName": index_name,
         }
         resp = s.post(
             NIFTYINDICES_URL,
@@ -107,44 +109,44 @@ def fetch_niftyindices(start: date, end: date, session: requests.Session | None 
     return [rows[k] for k in sorted(rows)]
 
 
-def parse_nse_all_indices(payload: dict) -> dict:
+def parse_nse_all_indices(payload: dict, index_name: str = INDEX_NAME) -> dict:
     for item in payload.get("data", []):
-        if item.get("index") == INDEX_NAME or item.get("indexSymbol") == INDEX_NAME:
+        if item.get("index") == index_name or item.get("indexSymbol") == index_name:
             pe = _to_float(item.get("pe"))
             if pe is None:
-                raise FetchError("NSE allIndices has no PE for NIFTY 50")
+                raise FetchError(f"NSE allIndices has no PE for {index_name}")
             return {
                 "date": date.today().isoformat(),
                 "pe": pe,
                 "pb": _to_float(item.get("pb")),
                 "div_yield": _to_float(item.get("dy")),
             }
-    raise FetchError("NIFTY 50 not found in NSE allIndices response")
+    raise FetchError(f"{index_name} not found in NSE allIndices response")
 
 
-def fetch_nse_today(session: requests.Session | None = None) -> dict:
+def fetch_nse_today(index_name: str = INDEX_NAME, session: requests.Session | None = None) -> dict:
     s = session or requests.Session()
     # NSE needs a cookie from the home page first.
     s.get(NSE_HOME, headers=HEADERS, timeout=TIMEOUT)
     resp = s.get(NSE_ALL_INDICES, headers=HEADERS, timeout=TIMEOUT)
     if resp.status_code != 200:
         raise FetchError(f"NSE HTTP {resp.status_code}")
-    return parse_nse_all_indices(resp.json())
+    return parse_nse_all_indices(resp.json(), index_name)
 
 
-def fetch_latest(days_back: int = 10) -> tuple[list[dict], str]:
-    """Latest rows plus the name of the source that worked."""
+def fetch_latest(index_name: str = INDEX_NAME, days_back: int = 10) -> tuple[list[dict], str]:
+    """Latest rows for one index plus the name of the source that worked."""
     errors = []
     try:
         end = date.today()
-        rows = fetch_niftyindices(end - timedelta(days=days_back), end)
+        rows = fetch_niftyindices(end - timedelta(days=days_back), end, index_name)
         if rows:
             return rows, "niftyindices"
         errors.append("niftyindices returned no rows")
     except Exception as e:  # noqa: BLE001 - we want every failure mode recorded
         errors.append(f"niftyindices: {e}")
     try:
-        return [fetch_nse_today()], "nse"
+        return [fetch_nse_today(index_name)], "nse"
     except Exception as e:  # noqa: BLE001
         errors.append(f"nse: {e}")
     raise FetchError("; ".join(errors))
