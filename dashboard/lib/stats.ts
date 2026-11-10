@@ -112,7 +112,7 @@ export const RANGES = [
   { key: "All", days: Infinity },
 ] as const;
 
-export function sliceRange(rows: Row[], days: number): Row[] {
+export function sliceRange<T extends { date: string }>(rows: T[], days: number): T[] {
   if (!rows.length || !isFinite(days)) return rows;
   const last = new Date(rows[rows.length - 1].date + "T00:00:00Z");
   last.setUTCDate(last.getUTCDate() - days);

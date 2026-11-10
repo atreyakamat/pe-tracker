@@ -1,9 +1,25 @@
 # pe-tracker
 
-Tells you when the Nifty 50 is cheap vs its own history, for SIP top-ups.
+Tells you when Indian equity indices are cheap vs their own history, and how they compare, for SIP top-ups.
 
-- **Daily job** (GitHub Actions, weekdays 18:00 IST): fetch PE, compare to the last 10 years, alert on Telegram.
-- **Dashboard** (Next.js, static, Netlify): PE chart with buy/expensive bands, distance-from-median, distribution, data table.
+- **Daily job** (GitHub Actions, weekdays 18:00 IST): fetch PE/PB/yield for every index, compare to the last 10 years, send one Telegram digest.
+- **Dashboard** (Next.js, static, Netlify): per-index PE chart with buy/expensive bands, distance-from-median, distribution, data table; plus a **Compare** page (ranking, relative valuation, correlation, plain-language read-out).
+
+## Indices
+
+Defined in `tracker/indices.py`: Nifty 50, Nifty Next 50, Nifty 100, Nifty 500, Nifty Midcap 150, Nifty Smallcap 250, Nifty Bank, Nifty IT. Add one there and it flows through fetch, signal, compare, alerts and the UI.
+Sensex is not included: BSE has no stable PE-history endpoint, and it overlaps Nifty 50 heavily.
+
+## Compare and inference
+
+All rule-based statistics on valuation history, not price forecasts (`tracker/compare.py`):
+
+- **Valuation score** (0-100, lower is cheaper): mean of PE percentile, PB percentile and inverted dividend-yield percentile.
+- **Relative valuation:** PE premium/discount of Midcap, Smallcap, Nifty 500, Bank and IT over Nifty 50, and where that gap sits in its own 10-year history.
+- **Correlation** of daily PE changes (3y), which shows which indices actually diversify valuation risk.
+- **Insights:** cheapest/richest, who is in the BUY zone, unusually high/low relative gaps.
+
+Index PE methods differ slightly, so cross-index comparisons are approximate.
 
 ## The rule
 
@@ -20,7 +36,7 @@ Signal only, not financial advice. Valuation can stay cheap or rich for years.
 
 ## Alerts
 
-You get a Telegram message when the zone changes, every day while in the BUY zone, and when a fetch fails (so stale data never looks like "no signal").
+One digest message (not one per index) when: any index changes zone, a core index (Nifty 50, Nifty 500) is in its BUY zone (daily reminder), any fetch fails (so stale data never looks like "no signal"), or every Monday as a weekly summary. Otherwise it stays quiet.
 
 ## Setup
 
@@ -34,7 +50,8 @@ You get a Telegram message when the zone changes, every day while in the BUY zon
 ```bash
 pip install -r requirements.txt
 python -m pytest -q
-python -m tracker.run demo          # SYNTHETIC data to preview the UI (git-ignored)
+python -m tracker.run demo          # SYNTHETIC data in data/demo/ to preview the UI (git-ignored)
+python -m tracker.run backfill --only nifty50,midcap150   # backfill selected indices
 cd dashboard && npm install && npm run dev
 ```
 
@@ -42,4 +59,4 @@ cd dashboard && npm install && npm run dev
 
 ## Data sources (read this)
 
-There is no official public PE API. This uses the niftyindices.com historical PE/PB/dividend-yield endpoint, with the NSE `allIndices` endpoint as a fallback for today's value. Both are unofficial and can change or block cloud IPs. Fetch parsing is covered by fixture tests, but the live endpoints have only been exercised on GitHub Actions, not in development.
+There is no official public PE API. This uses the niftyindices.com historical PE/PB/dividend-yield endpoint, with the NSE `allIndices` endpoint as a fallback for today's value. The index names in `tracker/indices.py` are the ones those sites use, but have not been confirmed against the live endpoint; if one index fails on the first backfill, fix its `name` there. Both are unofficial and can change or block cloud IPs. Fetch parsing is covered by fixture tests, but the live endpoints have only been exercised on GitHub Actions, not in development.

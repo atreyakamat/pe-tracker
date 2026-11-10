@@ -1,15 +1,18 @@
-"""Tiny JSON file store for PE history and alert state."""
+"""Tiny JSON file store: one history file per index, plus alert state and compare output."""
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
-HISTORY_FILE = DATA_DIR / "nifty50_pe.json"
-STATE_FILE = DATA_DIR / "state.json"
 
 
-def load_history(path: Path = HISTORY_FILE) -> list[dict]:
+def history_path(key: str, data_dir: Path | None = None) -> Path:
+    return (data_dir or DATA_DIR) / f"{key}.json"
+
+
+def load_history(key: str, data_dir: Path | None = None) -> list[dict]:
+    path = history_path(key, data_dir)
     if not path.exists():
         return []
     return json.loads(path.read_text())
@@ -23,17 +26,27 @@ def merge_history(existing: list[dict], new_rows: list[dict]) -> list[dict]:
     return [by_date[k] for k in sorted(by_date)]
 
 
-def save_history(rows: list[dict], path: Path = HISTORY_FILE) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(rows, separators=(",", ":")))
+def save_history(key: str, rows: list[dict], data_dir: Path | None = None) -> None:
+    data_dir = data_dir or DATA_DIR
+    data_dir.mkdir(parents=True, exist_ok=True)
+    history_path(key, data_dir).write_text(json.dumps(rows, separators=(",", ":")))
 
 
-def load_state(path: Path = STATE_FILE) -> dict:
+def load_state(path: Path | None = None) -> dict:
+    """{index_key: {"zone": ..., "date": ..., "source": ...}}"""
+    path = path or DATA_DIR / "state.json"
     if not path.exists():
         return {}
     return json.loads(path.read_text())
 
 
-def save_state(state: dict, path: Path = STATE_FILE) -> None:
+def save_state(state: dict, path: Path | None = None) -> None:
+    path = path or DATA_DIR / "state.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(state, indent=2))
+
+
+def write_json(name: str, obj, data_dir: Path | None = None, indent: int | None = None) -> None:
+    data_dir = data_dir or DATA_DIR
+    data_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / name).write_text(json.dumps(obj, indent=indent, separators=None if indent else (",", ":")))
