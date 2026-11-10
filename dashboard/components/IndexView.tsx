@@ -7,35 +7,39 @@ import {
   ReferenceArea, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import {
-  RANGES, Row, Stats, Zone, computeStats, histogram, sliceRange, windowRows,
+  RANGES, Row, computeStats, histogram, sliceRange, windowRows,
 } from "../lib/stats";
+import { IndexInfo, Latest, Meta, loadHistory, loadIndices, loadLatest, loadMeta } from "../lib/data";
+import { ZONE_UI, fmtDate, fmtFull } from "../lib/ui";
+import Shell from "./Shell";
 
-type Meta = { demo: boolean; source: string; empty?: boolean };
-
-const ZONE_UI: Record<Zone, { label: string; icon: string; color: string; blurb: string }> = {
-  BUY: { label: "Buy zone", icon: "▼", color: "var(--good)", blurb: "Cheap vs its own history. Add beyond your regular SIP." },
-  NEUTRAL: { label: "Fair value", icon: "●", color: "var(--neutral-zone)", blurb: "Around its historical norm. Keep your regular SIP." },
-  EXPENSIVE: { label: "Expensive", icon: "▲", color: "var(--critical)", blurb: "Rich vs history. Keep the SIP, skip extra lump sums." },
-};
-
-const fmtDate = (d: string) =>
-  new Date(d + "T00:00:00Z").toLocaleDateString("en-IN", { month: "short", year: "2-digit", timeZone: "UTC" });
-const fmtFull = (d: string) =>
-  new Date(d + "T00:00:00Z").toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
-
-export default function Dashboard() {
-  const [rows, setRows] = useState<Row[] | null>(null);
+export default function IndexView() {
+  const [indices, setIndices] = useState<IndexInfo[] | null>(null);
+  const [latest, setLatest] = useState<Latest>({});
   const [meta, setMeta] = useState<Meta | null>(null);
+  const [key, setKey] = useState("nifty50");
+  const [rows, setRows] = useState<Row[] | null>(null);
   const [range, setRange] = useState<(typeof RANGES)[number]["key"]>("5Y");
   const [showTable, setShowTable] = useState(false);
 
   useEffect(() => {
-    Promise.all([
-      fetch("/data/history.json").then((r) => r.json()),
-      fetch("/data/meta.json").then((r) => r.json()),
-    ]).then(([h, m]) => { setRows(h); setMeta(m); }).catch(() => { setRows([]); setMeta({ demo: false, source: "none", empty: true }); });
+    Promise.all([loadIndices(), loadLatest(), loadMeta()])
+      .then(([i, l, m]) => {
+        setIndices(i); setLatest(l); setMeta(m);
+        const h = window.location.hash.slice(1);
+        setKey(i.some((x) => x.key === h) ? h : i.find((x) => x.key === "nifty50")?.key ?? i[0]?.key ?? "nifty50");
+      })
+      .catch(() => { setIndices([]); setMeta({ demo: false, source: "none", empty: true }); });
   }, []);
 
+  useEffect(() => {
+    if (!indices?.length) return;
+    setRows(null);
+    loadHistory(key).then(setRows).catch(() => setRows([]));
+    window.history.replaceState(null, "", `#${key}`);
+  }, [key, indices]);
+
+  const label = indices?.find((i) => i.key === key)?.label ?? key;
   const stats = useMemo(() => (rows ? computeStats(rows) : null), [rows]);
   const visible = useMemo(() => {
     const days = RANGES.find((r) => r.key === range)!.days;
@@ -50,14 +54,16 @@ export default function Dashboard() {
     });
   }, [visible, stats]);
 
-  if (rows === null) return <Shell><p className="text-[var(--text-secondary)]">Loading…</p></Shell>;
-  if (!stats || meta?.empty) {
+  if (indices === null || (indices.length > 0 && rows === null)) {
+    return <Shell><p className="text-[var(--text-secondary)]">Loading…</p></Shell>;
+  }
+  if (!indices.length || !stats || meta?.empty) {
     return (
       <Shell>
         <div className="card p-8">
           <h2 className="text-xl font-semibold">No data yet</h2>
           <p className="mt-2 text-[var(--text-secondary)]">
-            Run <code>python -m tracker.run backfill</code> to load PE history, or <code>python -m tracker.run demo</code> to preview with synthetic data.
+            Run <code>python -m tracker.run backfill</code> then <code>python -m tracker.run daily</code>, or <code>python -m tracker.run demo</code> to preview with synthetic data.
           </p>
         </div>
       </Shell>
@@ -69,6 +75,25 @@ export default function Dashboard() {
 
   return (
     <Shell>
+      <div role="tablist" aria-label="Index" className="mb-6 flex flex-wrap gap-2">
+        {indices.map((i) => {
+          const zn = latest[i.key]?.zone;
+          return (
+            <button
+              key={i.key}
+              role="tab"
+              aria-selected={key === i.key}
+              onClick={() => setKey(i.key)}
+              title={zn ? ZONE_UI[zn].label : undefined}
+              className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] px-3 py-1 text-sm transition-colors aria-selected:bg-[var(--text-primary)] aria-selected:text-[var(--surface)]"
+            >
+              {zn && <span aria-hidden style={{ color: key === i.key ? undefined : ZONE_UI[zn].color }}>{ZONE_UI[zn].icon}</span>}
+              {i.label}
+              {zn && <span className="sr-only"> ({ZONE_UI[zn].label})</span>}
+            </button>
+          );
+        })}
+      </div>
       {meta?.demo && (
         <div role="status" className="mb-6 rounded-xl border border-[var(--series-2)] px-4 py-3 text-sm">
           <strong>Demo mode.</strong> This is synthetic data for previewing the UI, not the real market.
@@ -82,7 +107,7 @@ export default function Dashboard() {
       >
         <div className="flex flex-wrap items-end justify-between gap-6">
           <div>
-            <p className="text-sm text-[var(--text-secondary)]">Nifty 50 PE · {fmtFull(stats.date)}</p>
+            <p className="text-sm text-[var(--text-secondary)]">{label} PE · {fmtFull(stats.date)}</p>
             <p className="mt-1 text-6xl font-semibold tracking-tight sm:text-7xl">{stats.pe.toFixed(2)}</p>
           </div>
           <div className="max-w-sm">
@@ -102,11 +127,12 @@ export default function Dashboard() {
       </motion.section>
 
       {/* KPI row */}
-      <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
         {[
           { k: "10y median PE", v: stats.median.toFixed(2) },
           { k: "vs median", v: `${(((stats.pe - stats.median) / stats.median) * 100).toFixed(1)}%` },
           { k: "z-score", v: stats.zScore.toFixed(2) },
+          { k: "Valuation score", v: latest[key]?.composite != null ? `${latest[key].composite!.toFixed(0)}/100` : "n/a" },
           { k: "30-day PE change", v: stats.change30d == null ? "n/a" : `${stats.change30d >= 0 ? "▲" : "▼"} ${Math.abs(stats.change30d).toFixed(1)}%` },
           { k: "PB · Div. yield", v: `${stats.pb?.toFixed(2) ?? "n/a"} · ${stats.divYield != null ? stats.divYield.toFixed(2) + "%" : "n/a"}` },
         ].map((t, i) => (
@@ -115,7 +141,7 @@ export default function Dashboard() {
             initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 * i + 0.1 }}
           >
             <p className="text-xs text-[var(--text-secondary)]">{t.k}</p>
-            <p className="mt-1 text-xl font-semibold">{t.v}</p>
+            <p className="mt-1 whitespace-nowrap text-lg font-semibold">{t.v}</p>
           </motion.div>
         ))}
       </div>
@@ -197,25 +223,13 @@ export default function Dashboard() {
         <button onClick={() => setShowTable((s) => !s)} aria-expanded={showTable} className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm">
           {showTable ? "Hide" : "Show"} data table
         </button>
-        {showTable && <DataTable rows={windowRows(rows).slice(-30).reverse()} median={stats.median} />}
+        {showTable && <DataTable rows={windowRows(rows ?? []).slice(-30).reverse()} median={stats.median} />}
       </div>
 
       <footer className="mt-10 border-t border-[var(--border)] pt-4 text-xs text-[var(--text-muted)]">
         Source: {meta?.source}. Signal only, not financial advice. Valuation can stay cheap or rich for years, so use it to size extra buys, not to stop a SIP.
       </footer>
     </Shell>
-  );
-}
-
-function Shell({ children }: { children: React.ReactNode }) {
-  return (
-    <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
-      <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Nifty 50 PE Tracker</h1>
-        <p className="text-sm text-[var(--text-secondary)]">Is the market cheap or expensive vs its own history?</p>
-      </header>
-      {children}
-    </main>
   );
 }
 

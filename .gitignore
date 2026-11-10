@@ -7,6 +7,6 @@ node_modules/
 .next/
 out/
 dashboard/public/data/
-data/demo*.json
+data/demo/
 dashboard/next-env.d.ts
 dashboard/tsconfig.tsbuildinfo

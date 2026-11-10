@@ -1,84 +1,164 @@
 """Daily job.
 
-  python -m tracker.run backfill [--years 12]   one-time: load full PE history
-  python -m tracker.run daily                    fetch latest, compute signal, alert
-  python -m tracker.run demo                     write synthetic data for UI preview ONLY
+  python -m tracker.run backfill [--years 12] [--only nifty50,midcap150]
+  python -m tracker.run daily [--always-notify]
+  python -m tracker.run demo        # SYNTHETIC data into data/demo/ for UI preview only
 """
 from __future__ import annotations
 
 import argparse
-import json
 import math
 import random
 import sys
 from datetime import date, timedelta
+from pathlib import Path
 
-from . import fetch, notify, store
-from .signal import compute_signal
+from . import compare, fetch, notify, store
+from .indices import BY_KEY, INDICES, Index
+from .signal import Signal, compute_signal
 
 
-def cmd_backfill(years: int) -> None:
+def _select(only: str | None) -> list[Index]:
+    if not only:
+        return INDICES
+    keys = [k.strip() for k in only.split(",") if k.strip()]
+    unknown = [k for k in keys if k not in BY_KEY]
+    if unknown:
+        raise SystemExit(f"Unknown index key(s): {', '.join(unknown)}. Known: {', '.join(BY_KEY)}")
+    return [BY_KEY[k] for k in keys]
+
+
+def publish(histories: dict[str, list[dict]], signals: dict[str, Signal], data_dir: Path) -> dict:
+    """Write everything the dashboard reads: manifest, latest signals, comparison."""
+    comp = compare.build_compare(histories, signals)
+    store.write_json("indices.json", [
+        {"key": i.key, "label": i.label, "group": i.group, "core": i.core}
+        for i in INDICES if i.key in signals
+    ], data_dir)
+    store.write_json("latest.json", {k: s.to_dict() for k, s in signals.items()}, data_dir, indent=2)
+    store.write_json("compare.json", comp, data_dir)
+    return comp
+
+
+def cmd_backfill(years: int, only: str | None) -> None:
     end = date.today()
-    rows = fetch.fetch_niftyindices(end - timedelta(days=365 * years), end)
-    if not rows:
-        raise SystemExit("Backfill returned no rows")
-    merged = store.merge_history(store.load_history(), rows)
-    store.save_history(merged)
-    print(f"Saved {len(merged)} rows ({merged[0]['date']} -> {merged[-1]['date']})")
-
-
-def _write_latest(sig) -> None:
-    store.DATA_DIR.mkdir(parents=True, exist_ok=True)
-    (store.DATA_DIR / "latest.json").write_text(json.dumps(sig.to_dict(), indent=2))
+    ok, failed = [], {}
+    for idx in _select(only):
+        try:
+            rows = fetch.fetch_niftyindices(end - timedelta(days=365 * years), end, idx.name)
+            if not rows:
+                raise fetch.FetchError("no rows returned")
+            merged = store.merge_history(store.load_history(idx.key), rows)
+            store.save_history(idx.key, merged)
+            ok.append(idx.key)
+            print(f"{idx.key}: {len(merged)} rows ({merged[0]['date']} -> {merged[-1]['date']})")
+        except Exception as e:  # noqa: BLE001
+            failed[idx.key] = str(e)
+            print(f"{idx.key}: FAILED {e}", file=sys.stderr)
+    if not ok:
+        raise SystemExit("Backfill failed for every index")
+    if failed:
+        print(f"Backfill partial. Failed: {', '.join(failed)}", file=sys.stderr)
 
 
 def cmd_daily(always_notify: bool) -> None:
-    state = store.load_state()
-    try:
-        new_rows, source = fetch.fetch_latest()
-    except fetch.FetchError as e:
-        # Never fail silently: tell the user the data is stale.
-        msg = f"⚠️ PE tracker could not fetch data today: {e}"
-        print(msg, file=sys.stderr)
+    prev_state = store.load_state()
+    histories: dict[str, list[dict]] = {}
+    signals: dict[str, Signal] = {}
+    failures: dict[str, str] = {}
+    sources: dict[str, str] = {}
+
+    for idx in INDICES:
+        history = store.load_history(idx.key)
         try:
-            notify.send_telegram(msg)
-        except Exception as ne:  # noqa: BLE001
-            print(f"Also failed to send alert: {ne}", file=sys.stderr)
+            new_rows, source = fetch.fetch_latest(idx.name)
+            history = store.merge_history(history, new_rows)
+            store.save_history(idx.key, history)
+            sources[idx.key] = source
+        except fetch.FetchError as e:
+            failures[idx.key] = str(e)
+            print(f"{idx.key}: fetch failed: {e}", file=sys.stderr)
+        if not history:
+            continue
+        try:
+            signals[idx.key] = compute_signal(history)
+            histories[idx.key] = history
+        except ValueError as e:
+            failures.setdefault(idx.key, str(e))
+            print(f"{idx.key}: {e}", file=sys.stderr)
+
+    if not signals:
+        _alert_text("⚠️ PE tracker: no index data available today. " + "; ".join(f"{k}: {v}" for k, v in failures.items()))
         raise SystemExit(1)
 
-    history = store.merge_history(store.load_history(), new_rows)
-    store.save_history(history)
-    sig = compute_signal(history)
-    _write_latest(sig)
+    comp = publish(histories, signals, store.DATA_DIR)
+    core = {i.key for i in INDICES if i.core}
+    reasons = notify.should_send(
+        comp["table"], prev_state, failures, core, always=always_notify, weekly=date.today().weekday() == 0
+    )
+    print(f"{comp['date']}: {len(signals)} indices, failures={list(failures)}, notify={reasons or 'no'}")
+    if reasons:
+        notify.send_telegram(
+            notify.format_digest(comp["table"], prev_state, comp["insights"], failures, comp["date"])
+        )
 
-    prev = state.get("zone")
-    changed = prev != sig.zone
-    print(f"[{source}] {sig.date} PE={sig.pe} zone={sig.zone} pct={sig.percentile} (prev={prev})")
+    new_state = {**prev_state}
+    for k, s in signals.items():
+        new_state[k] = {"zone": s.zone, "date": s.date, "source": sources.get(k, "stale")}
+    store.save_state(new_state)
+    if failures and len(failures) == len(INDICES):
+        raise SystemExit(1)
 
-    # Alert when the zone changes, or every day while in BUY zone, or when forced.
-    if changed or sig.zone == "BUY" or always_notify:
-        notify.send_telegram(notify.format_signal(sig, prev))
 
-    store.save_state({"zone": sig.zone, "date": sig.date, "source": source})
+def _alert_text(msg: str) -> None:
+    print(msg, file=sys.stderr)
+    try:
+        notify.send_telegram(msg)
+    except Exception as e:  # noqa: BLE001
+        print(f"Also failed to send alert: {e}", file=sys.stderr)
+
+
+# --- demo -----------------------------------------------------------------------------
+# (mean PE, mean-reversion speed, market beta, idiosyncratic vol, yield base)
+_DEMO = {
+    "nifty50": (22.0, 0.020, 1.0, 0.18, 1.3),
+    "niftynext50": (24.0, 0.018, 1.2, 0.25, 1.4),
+    "nifty100": (22.5, 0.020, 1.0, 0.18, 1.3),
+    "nifty500": (23.5, 0.018, 1.1, 0.22, 1.2),
+    "midcap150": (28.0, 0.015, 1.4, 0.35, 0.9),
+    "smallcap250": (24.0, 0.012, 1.6, 0.50, 0.8),
+    "niftybank": (15.5, 0.022, 1.1, 0.30, 1.1),
+    "niftyit": (26.0, 0.015, 0.6, 0.55, 2.2),
+}
 
 
 def cmd_demo() -> None:
-    """Synthetic mean-reverting PE series so the dashboard can be previewed offline.
-    Written to data/demo.json, never to the real history file."""
-    store.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    """Synthetic data so the dashboard can be previewed offline. Written to data/demo/, never to real files."""
+    out = store.DATA_DIR / "demo"
+    out.mkdir(parents=True, exist_ok=True)
     random.seed(7)
-    rows, pe, d = [], 22.0, date.today() - timedelta(days=365 * 12)
+    days = []
+    d = date.today() - timedelta(days=365 * 12)
     while d <= date.today():
         if d.weekday() < 5:
-            pe += 0.02 * (22 - pe) + random.gauss(0, 0.25)
-            pe = max(12.0, pe)
-            rows.append({"date": d.isoformat(), "pe": round(pe, 2),
-                         "pb": round(pe * 0.19, 2), "div_yield": round(1.4 + math.sin(len(rows) / 300) * 0.2, 2)})
+            days.append(d)
         d += timedelta(days=1)
-    (store.DATA_DIR / "demo.json").write_text(json.dumps(rows, separators=(",", ":")))
-    sig = compute_signal(rows)
-    (store.DATA_DIR / "demo_latest.json").write_text(json.dumps(sig.to_dict(), indent=2))
-    print(f"Demo data: {len(rows)} rows. SYNTHETIC, not real market data.")
+    market = [random.gauss(0, 0.22) for _ in days]
+    histories, signals = {}, {}
+    for i, idx in enumerate(INDICES):
+        mu, k, beta, vol, dy0 = _DEMO[idx.key]
+        rng = random.Random(100 + i)
+        pe, rows = mu, []
+        for n, day in enumerate(days):
+            pe += k * (mu - pe) + beta * market[n] + rng.gauss(0, vol)
+            pe = max(mu * 0.5, pe)
+            rows.append({"date": day.isoformat(), "pe": round(pe, 2), "pb": round(pe * 0.18, 2),
+                         "div_yield": round(max(0.3, dy0 + math.sin(n / 300 + i) * 0.2), 2)})
+        store.write_json(f"{idx.key}.json", rows, out)
+        histories[idx.key] = rows
+        signals[idx.key] = compute_signal(rows)
+    publish(histories, signals, out)
+    print(f"Demo data for {len(INDICES)} indices in {out}. SYNTHETIC, not real market data.")
 
 
 def main() -> None:
@@ -86,12 +166,13 @@ def main() -> None:
     sub = p.add_subparsers(dest="cmd", required=True)
     b = sub.add_parser("backfill")
     b.add_argument("--years", type=int, default=12)
+    b.add_argument("--only", default=None, help="comma-separated index keys")
     d = sub.add_parser("daily")
     d.add_argument("--always-notify", action="store_true")
     sub.add_parser("demo")
     a = p.parse_args()
     if a.cmd == "backfill":
-        cmd_backfill(a.years)
+        cmd_backfill(a.years, a.only)
     elif a.cmd == "daily":
         cmd_daily(a.always_notify)
     else:

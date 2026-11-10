@@ -1,5 +1,5 @@
-import Dashboard from "../components/Dashboard";
+import IndexView from "../components/IndexView";
 
 export default function Page() {
-  return <Dashboard />;
+  return <IndexView />;
 }
