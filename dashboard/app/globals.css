@@ -1,0 +1,60 @@
+@import "tailwindcss";
+
+/* Palette tokens: validated reference palette, light + dark selected separately. */
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.1);
+  --series-1: #2a78d6;   /* PE line / emphasis */
+  --series-2: #eb6834;   /* secondary accent (today marker) */
+  --div-cool: #2a78d6;   /* below median (cheap) */
+  --div-warm: #e34948;   /* above median (expensive) */
+  --good: #0ca30c;
+  --good-text: #006300;
+  --critical: #d03b3b;
+  --neutral-zone: #898781;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --text-primary: #f0efec;
+    --text-secondary: #c3c2b7;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255, 255, 255, 0.1);
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --div-cool: #3987e5;
+    --div-warm: #e66767;
+    --good-text: #0ca30c;
+  }
+}
+
+body {
+  background: var(--page);
+  color: var(--text-primary);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+.axis-tick { fill: var(--text-muted); font-size: 12px; }
+.tt {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 13px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+}

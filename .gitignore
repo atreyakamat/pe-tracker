@@ -1,0 +1,12 @@
+__pycache__/
+.pytest_cache/
+.venv/
+.env
+.env.*
+node_modules/
+.next/
+out/
+dashboard/public/data/
+data/demo*.json
+dashboard/next-env.d.ts
+dashboard/tsconfig.tsbuildinfo
