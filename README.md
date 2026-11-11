@@ -52,11 +52,14 @@ pip install -r requirements.txt
 python -m pytest -q
 python -m tracker.run demo          # SYNTHETIC data in data/demo/ to preview the UI (git-ignored)
 python -m tracker.run backfill --only nifty50,midcap150   # backfill selected indices
+python -m tracker.run probe        # test one live fetch from each source and print what came back
 cd dashboard && npm install && npm run dev
 ```
 
-`python -m tracker.run backfill` and `daily` need network access to niftyindices.com / nseindia.com.
+`python -m tracker.run backfill` and `daily` need network access to niftyindices.com.
 
 ## Data sources (read this)
 
-There is no official public PE API. This uses the niftyindices.com historical PE/PB/dividend-yield endpoint, with the NSE `allIndices` endpoint as a fallback for today's value. The index names in `tracker/indices.py` are the ones those sites use, but have not been confirmed against the live endpoint; if one index fails on the first backfill, fix its `name` there. Both are unofficial and can change or block cloud IPs. Fetch parsing is covered by fixture tests, but the live endpoints have only been exercised on GitHub Actions, not in development.
+There is no official public PE API. This uses the niftyindices.com historical PE/PB/dividend-yield endpoint (`/BackPage/getpepbHistoricaldataDBtoString`), which is what stored history comes from. It is unofficial and can change or block cloud IPs. The NSE `allIndices` endpoint is only used by `python -m tracker.run probe` as a live check, never for stored history, because during market hours it reports the previous day's PE under today's date.
+
+**Outliers:** when an index's earnings briefly collapse, the published PE spikes (Smallcap 250 once printed 44,711). Days with PE above 3x the window median are excluded from percentiles, bands, charts and comparisons, and indices with 3%+ such days (Midcap 150, Smallcap 250) get a warning mark: lean on PB and dividend yield for those. Raw data is kept as published.

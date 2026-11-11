@@ -25,7 +25,7 @@ def env(tmp_path, monkeypatch):
 
 def test_daily_publishes_files_and_sends_digest_when_forced(env, monkeypatch):
     tmp, sent = env
-    monkeypatch.setattr(fetch, "fetch_latest", lambda name, *a, **k: ([], "niftyindices"))
+    monkeypatch.setattr(fetch, "fetch_latest", lambda idx, *a, **k: ([], "niftyindices"))
     run.cmd_daily(always_notify=True)
     for f in ("latest.json", "compare.json", "indices.json", "state.json"):
         assert (tmp / f).exists(), f
@@ -37,8 +37,8 @@ def test_daily_publishes_files_and_sends_digest_when_forced(env, monkeypatch):
 def test_one_index_failing_is_reported_but_job_continues(env, monkeypatch):
     tmp, sent = env
 
-    def fake(name, *a, **k):
-        if name == "NIFTY BANK":
+    def fake(idx, *a, **k):
+        if idx.name == "NIFTY BANK":
             raise fetch.FetchError("blocked")
         return [], "niftyindices"
 
@@ -53,7 +53,7 @@ def test_all_fetches_failing_with_no_data_exits_nonzero_and_alerts(tmp_path, mon
     monkeypatch.setattr(store, "DATA_DIR", tmp_path)
     sent = []
     monkeypatch.setattr(notify, "send_telegram", lambda text, *a, **k: sent.append(text))
-    monkeypatch.setattr(fetch, "fetch_latest", lambda name, *a, **k: (_ for _ in ()).throw(fetch.FetchError("down")))
+    monkeypatch.setattr(fetch, "fetch_latest", lambda idx, *a, **k: (_ for _ in ()).throw(fetch.FetchError("down")))
     with pytest.raises(SystemExit) as e:
         run.cmd_daily(always_notify=False)
     assert e.value.code == 1
@@ -62,7 +62,7 @@ def test_all_fetches_failing_with_no_data_exits_nonzero_and_alerts(tmp_path, mon
 
 def test_quiet_day_sends_nothing(env, monkeypatch):
     tmp, sent = env
-    monkeypatch.setattr(fetch, "fetch_latest", lambda name, *a, **k: ([], "niftyindices"))
+    monkeypatch.setattr(fetch, "fetch_latest", lambda idx, *a, **k: ([], "niftyindices"))
     run.cmd_daily(always_notify=True)          # first run records state; fixture data ends EXPENSIVE for all
     assert all(r["zone"] == "EXPENSIVE" for r in __import__("json").loads((tmp / "compare.json").read_text())["table"])
     sent.clear()
@@ -70,3 +70,18 @@ def test_quiet_day_sends_nothing(env, monkeypatch):
     monkeypatch.setattr(run, "date", type("D", (), {"today": staticmethod(lambda: date(2026, 11, 10))}))
     run.cmd_daily(always_notify=False)
     assert sent == []
+
+
+def test_telegram_failure_keeps_data_but_not_state_and_fails_the_run(env, monkeypatch):
+    tmp, sent = env
+    monkeypatch.setattr(fetch, "fetch_latest", lambda idx, *a, **k: ([], "niftyindices"))
+
+    def boom(*a, **k):
+        raise RuntimeError("telegram down")
+
+    monkeypatch.setattr(notify, "send_telegram", boom)
+    with pytest.raises(SystemExit) as e:
+        run.cmd_daily(always_notify=True)
+    assert "notification failed" in str(e.value)
+    assert (tmp / "compare.json").exists()        # dashboard data still published
+    assert not (tmp / "state.json").exists()      # so the alert is retried next run

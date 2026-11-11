@@ -10,6 +10,10 @@ BUY_PCT = 25.0        # at or below -> BUY zone (cheap vs history)
 EXPENSIVE_PCT = 75.0  # at or above -> EXPENSIVE zone
 LOOKBACK_YEARS = 10
 MIN_POINTS = 250      # ~1 year of trading days; below this the signal is unreliable
+# When an index's trailing earnings collapse its published PE explodes (Nifty Bank 2019, Midcap 2020,
+# Smallcap 2016-20 reached 60 to 44,000) and stops meaning anything. Days where PE is more than
+# OUTLIER_MULT x the window's median are excluded from the statistics. The data itself is kept.
+OUTLIER_MULT = 3.0
 
 
 @dataclass
@@ -30,6 +34,8 @@ class Signal:
     pb_percentile: float | None = None
     dy_percentile: float | None = None   # percentile of dividend yield (high yield = cheap)
     composite: float | None = None       # 0-100 "richness": mean of PE pct, PB pct, 100 - yield pct
+    outlier_days: int = 0                # days excluded from the statistics (PE > outlier_cap)
+    outlier_cap: float | None = None     # OUTLIER_MULT x median PE of the window
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -49,6 +55,12 @@ def _metric_pct(win: list[dict], field: str) -> float | None:
     if today_v is None or len(vals) < MIN_POINTS:
         return None
     return percentile_rank(vals, today_v)
+
+
+def split_outliers(pes: list[float], mult: float = OUTLIER_MULT) -> tuple[list[float], float]:
+    """(values within the cap, cap). The cap is mult x the median of all values, which outliers barely move."""
+    cap = mult * median(pes)
+    return [v for v in pes if v <= cap], cap
 
 
 def window(rows: list[dict], years: int = LOOKBACK_YEARS) -> list[dict]:
@@ -74,11 +86,12 @@ def compute_signal(rows: list[dict], years: int = LOOKBACK_YEARS) -> Signal:
         raise ValueError(
             f"Only {len(win)} data points in window; need at least {MIN_POINTS}. Backfill more history."
         )
-    pes = [r["pe"] for r in win]
+    all_pes = [r["pe"] for r in win]
+    pes, cap = split_outliers(all_pes)
     today = win[-1]
     sd = pstdev(pes)
     z = (today["pe"] - mean(pes)) / sd if sd else 0.0
-    pct = percentile_rank(pes, today["pe"])
+    pct = percentile_rank(pes, today["pe"])  # if today itself is above the cap this is 100
     pb_pct = _metric_pct(win, "pb")
     dy_pct = _metric_pct(win, "div_yield")
     parts = [pct] + ([pb_pct] if pb_pct is not None else []) + ([100 - dy_pct] if dy_pct is not None else [])
@@ -92,11 +105,13 @@ def compute_signal(rows: list[dict], years: int = LOOKBACK_YEARS) -> Signal:
         z_score=round(z, 2),
         min=min(pes),
         max=max(pes),
-        n_points=len(pes),
+        n_points=len(all_pes),
         lookback_years=years,
         pb=today.get("pb"),
         div_yield=today.get("div_yield"),
         pb_percentile=None if pb_pct is None else round(pb_pct, 1),
         dy_percentile=None if dy_pct is None else round(dy_pct, 1),
         composite=round(sum(parts) / len(parts), 1),
+        outlier_days=len(all_pes) - len(pes),
+        outlier_cap=round(cap, 2),
     )

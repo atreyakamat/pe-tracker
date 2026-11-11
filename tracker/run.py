@@ -2,6 +2,8 @@
 
   python -m tracker.run backfill [--years 12] [--only nifty50,midcap150]
   python -m tracker.run daily [--always-notify]
+  python -m tracker.run publish     # rebuild dashboard JSON from stored history (no fetch, no alerts)
+  python -m tracker.run probe [--index nifty50]   # test one live fetch and print what came back
   python -m tracker.run demo        # SYNTHETIC data into data/demo/ for UI preview only
 """
 from __future__ import annotations
@@ -45,7 +47,7 @@ def cmd_backfill(years: int, only: str | None) -> None:
     ok, failed = [], {}
     for idx in _select(only):
         try:
-            rows = fetch.fetch_niftyindices(end - timedelta(days=365 * years), end, idx.name)
+            rows = fetch.fetch_niftyindices(end - timedelta(days=365 * years), end, idx.ni_trading, idx.ni_index_name)
             if not rows:
                 raise fetch.FetchError("no rows returned")
             merged = store.merge_history(store.load_history(idx.key), rows)
@@ -71,7 +73,7 @@ def cmd_daily(always_notify: bool) -> None:
     for idx in INDICES:
         history = store.load_history(idx.key)
         try:
-            new_rows, source = fetch.fetch_latest(idx.name)
+            new_rows, source = fetch.fetch_latest(idx)
             history = store.merge_history(history, new_rows)
             store.save_history(idx.key, history)
             sources[idx.key] = source
@@ -97,17 +99,57 @@ def cmd_daily(always_notify: bool) -> None:
         comp["table"], prev_state, failures, core, always=always_notify, weekly=date.today().weekday() == 0
     )
     print(f"{comp['date']}: {len(signals)} indices, failures={list(failures)}, notify={reasons or 'no'}")
+    notify_error = None
     if reasons:
-        notify.send_telegram(
-            notify.format_digest(comp["table"], prev_state, comp["insights"], failures, comp["date"])
-        )
+        try:
+            notify.send_telegram(
+                notify.format_digest(comp["table"], prev_state, comp["insights"], failures, comp["date"])
+            )
+        except Exception as e:  # noqa: BLE001
+            notify_error = e
+            print(f"Telegram notification failed: {e}", file=sys.stderr)
 
-    new_state = {**prev_state}
-    for k, s in signals.items():
-        new_state[k] = {"zone": s.zone, "date": s.date, "source": sources.get(k, "stale")}
-    store.save_state(new_state)
+    if notify_error is None:
+        new_state = {**prev_state}
+        for k, s in signals.items():
+            new_state[k] = {"zone": s.zone, "date": s.date, "source": sources.get(k, "stale")}
+        store.save_state(new_state)
+    # else: keep the old state so the same alert is retried on the next run.
+    if notify_error is not None:
+        raise SystemExit(f"Data was updated but the Telegram notification failed: {notify_error}")
     if failures and len(failures) == len(INDICES):
         raise SystemExit(1)
+
+
+def cmd_publish() -> None:
+    """Rebuild latest/compare/indices JSON from stored history. No fetching, no notifications."""
+    histories, signals = {}, {}
+    for idx in INDICES:
+        rows = store.load_history(idx.key)
+        try:
+            signals[idx.key] = compute_signal(rows)
+            histories[idx.key] = rows
+        except ValueError as e:
+            print(f"{idx.key}: skipped ({e})", file=sys.stderr)
+    if not signals:
+        raise SystemExit("No index has enough history. Run backfill first.")
+    comp = publish(histories, signals, store.DATA_DIR)
+    print(f"Published {len(signals)} indices as of {comp['date']}")
+
+
+def cmd_probe(index_key: str) -> None:
+    """Fetch the last 30 days for one index from each source and print the outcome. For debugging."""
+    idx = BY_KEY[index_key]
+    end = date.today()
+    for label, call in (
+        ("niftyindices", lambda: fetch.fetch_niftyindices(end - timedelta(days=30), end, idx.ni_trading, idx.ni_index_name)),
+        ("nse allIndices (live snapshot, NOT used for history)", lambda: [fetch.fetch_nse_today(idx.name)]),
+    ):
+        try:
+            rows = call()
+            print(f"{label}: OK, {len(rows)} rows, latest {rows[-1] if rows else None}")
+        except Exception as e:  # noqa: BLE001
+            print(f"{label}: FAILED {e}")
 
 
 def _alert_text(msg: str) -> None:
@@ -169,12 +211,19 @@ def main() -> None:
     b.add_argument("--only", default=None, help="comma-separated index keys")
     d = sub.add_parser("daily")
     d.add_argument("--always-notify", action="store_true")
+    sub.add_parser("publish")
+    pr = sub.add_parser("probe")
+    pr.add_argument("--index", default="nifty50", choices=list(BY_KEY))
     sub.add_parser("demo")
     a = p.parse_args()
     if a.cmd == "backfill":
         cmd_backfill(a.years, a.only)
     elif a.cmd == "daily":
         cmd_daily(a.always_notify)
+    elif a.cmd == "publish":
+        cmd_publish()
+    elif a.cmd == "probe":
+        cmd_probe(a.index)
     else:
         cmd_demo()
 

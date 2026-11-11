@@ -91,7 +91,7 @@ function RankTable({ rows }: { rows: TableRow[] }) {
   return (
     <div className="card mt-3 overflow-x-auto">
       <table className="w-full min-w-[720px] text-sm">
-        <caption className="sr-only">Indices ranked by valuation score, cheapest first</caption>
+        <caption className="sr-only">Indices ranked by valuation score, cheapest first. A warning mark on PE means its history is distorted by earnings collapses.</caption>
         <thead>
           <tr className="text-left text-[var(--text-secondary)]">
             <th className="p-3">Index</th><th className="p-3">PE</th><th className="p-3">PE percentile</th>
@@ -110,7 +110,18 @@ function RankTable({ rows }: { rows: TableRow[] }) {
                     <span className="text-xs text-[var(--text-secondary)]">{z.label}</span>
                   </span>
                 </td>
-                <td className="p-3 tabular-nums">{r.pe.toFixed(1)}</td>
+                <td className="p-3 tabular-nums">
+                  {r.pe.toFixed(1)}
+                  {r.outlier_share >= 3 && (
+                    <span
+                      className="ml-1 cursor-help text-[var(--series-2)]"
+                      title={`PE history distorted on ${r.outlier_days} days (${r.outlier_share.toFixed(0)}%) when earnings collapsed. Those days are excluded; also check PB and dividend yield.`}
+                      aria-label={`PE history distorted on ${r.outlier_days} days`}
+                    >
+                      ⚠
+                    </span>
+                  )}
+                </td>
                 <td className="p-3"><Bar value={r.pe_percentile} marks={[25, 75]} /></td>
                 <td className="p-3"><Bar value={r.composite} /></td>
                 <td className="p-3 tabular-nums">{r.pb?.toFixed(2) ?? "n/a"}</td>

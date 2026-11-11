@@ -5,6 +5,19 @@ export type Zone = "BUY" | "NEUTRAL" | "EXPENSIVE";
 export const BUY_PCT = 25;
 export const EXPENSIVE_PCT = 75;
 export const LOOKBACK_YEARS = 10;
+/** Days with PE above this multiple of the window median are earnings-collapse artifacts (mirrors OUTLIER_MULT in Python). */
+export const OUTLIER_MULT = 3;
+
+export function medianOf(values: number[]): number {
+  const s = [...values].sort((a, b) => a - b);
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
+/** PE cap for a window: OUTLIER_MULT x median. Outliers barely move the median, so it is a stable yardstick. */
+export function outlierCap(rows: { pe: number }[]): number {
+  return rows.length ? OUTLIER_MULT * medianOf(rows.map((r) => r.pe)) : Infinity;
+}
 
 export function windowRows(rows: Row[], years = LOOKBACK_YEARS): Row[] {
   if (!rows.length) return [];
@@ -51,19 +64,21 @@ export type Stats = {
   min: number;
   max: number;
   nPoints: number;
+  capPe: number;        // PE above this is excluded from the statistics
+  outlierDays: number;  // window days excluded
   change30d: number | null; // % change in PE vs ~30 calendar days ago
 };
 
 export function computeStats(rows: Row[]): Stats | null {
   const win = windowRows(rows);
   if (win.length < 2) return null;
-  const pes = win.map((r) => r.pe);
+  const capPe = outlierCap(win);
+  const pes = win.map((r) => r.pe).filter((v) => v <= capPe);
   const sorted = [...pes].sort((a, b) => a - b);
   const today = win[win.length - 1];
   const mean = pes.reduce((a, b) => a + b, 0) / pes.length;
   const sd = Math.sqrt(pes.reduce((a, b) => a + (b - mean) ** 2, 0) / pes.length);
-  const mid = sorted.length >> 1;
-  const median = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  const median = medianOf(pes);
   const pct = percentileRank(sorted, today.pe);
 
   const cutoff = new Date(today.date + "T00:00:00Z");
@@ -86,15 +101,21 @@ export function computeStats(rows: Row[]): Stats | null {
     min: sorted[0],
     max: sorted[sorted.length - 1],
     nPoints: win.length,
+    capPe,
+    outlierDays: win.length - pes.length,
     change30d: past ? ((today.pe - past.pe) / past.pe) * 100 : null,
   };
 }
 
-export function histogram(rows: Row[], binSize = 1) {
-  const pes = windowRows(rows).map((r) => r.pe);
+export function histogram(rows: Row[]) {
+  const win = windowRows(rows);
+  const cap = outlierCap(win);
+  const pes = win.map((r) => r.pe).filter((v) => v <= cap);
   if (!pes.length) return [];
+  const span = Math.max(...pes) - Math.min(...pes);
+  const binSize = span > 60 ? 5 : span > 25 ? 2 : 1;
   const lo = Math.floor(Math.min(...pes) / binSize) * binSize;
-  const hi = Math.ceil(Math.max(...pes) / binSize) * binSize;
+  const hi = Math.ceil(Math.max(...pes) / binSize) * binSize || lo + binSize;
   const bins: { from: number; to: number; count: number }[] = [];
   for (let x = lo; x < hi; x += binSize) bins.push({ from: x, to: x + binSize, count: 0 });
   for (const v of pes) {

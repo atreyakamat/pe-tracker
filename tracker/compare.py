@@ -10,9 +10,10 @@ from math import sqrt
 from statistics import median
 
 from .indices import BY_KEY, PAIRS
-from .signal import LOOKBACK_YEARS, MIN_POINTS, Signal, percentile_rank
+from .signal import LOOKBACK_YEARS, MIN_POINTS, OUTLIER_MULT, Signal, percentile_rank, window
 
 CORR_YEARS = 3
+OUTLIER_NOTE_PCT = 3.0  # mention data quality in the insights above this share of days
 
 
 def _cutoff(rows: list[dict], years: int) -> str:
@@ -21,15 +22,18 @@ def _cutoff(rows: list[dict], years: int) -> str:
 
 
 def relative_series(rows_a: list[dict], rows_b: list[dict], years: int = LOOKBACK_YEARS) -> list[dict]:
-    """Premium of A's PE over B's PE (%), on dates both have."""
+    """Premium of A's PE over B's PE (%), on dates both have. Days where either PE is an
+    outlier (> OUTLIER_MULT x that index's median) are skipped."""
     if not rows_a or not rows_b:
         return []
-    b_by_date = {r["date"]: r["pe"] for r in rows_b}
-    cut = _cutoff(rows_a, years)
+    win_a, win_b = window(rows_a, years), window(rows_b, years)
+    cap_a = OUTLIER_MULT * median([r["pe"] for r in win_a])
+    cap_b = OUTLIER_MULT * median([r["pe"] for r in win_b])
+    b_by_date = {r["date"]: r["pe"] for r in win_b if r["pe"] <= cap_b}
     return [
         {"date": r["date"], "premium": (r["pe"] / b_by_date[r["date"]] - 1) * 100}
-        for r in rows_a
-        if r["date"] >= cut and r["date"] in b_by_date
+        for r in win_a
+        if r["pe"] <= cap_a and r["date"] in b_by_date
     ]
 
 
@@ -113,6 +117,8 @@ def build_table(signals: dict[str, Signal]) -> list[dict]:
                 "dy_percentile": sig.dy_percentile,
                 "composite": sig.composite,
                 "median_pe": sig.median,
+                "outlier_days": sig.outlier_days,
+                "outlier_share": round(100 * sig.outlier_days / sig.n_points, 1) if sig.n_points else 0.0,
             }
         )
     rows.sort(key=lambda r: (r["composite"] if r["composite"] is not None else 101))
@@ -146,6 +152,13 @@ def make_insights(table: list[dict], relatives: list[dict], corr: dict) -> list[
         out.append(f"No index is in its BUY zone today ({len(table)} tracked).")
     if rich:
         out.append(f"Expensive vs history: {', '.join(rich)}.")
+
+    noisy = [r for r in table if r.get("outlier_share", 0) >= OUTLIER_NOTE_PCT]
+    for r in noisy:
+        out.append(
+            f"PE history for {r['label']} is distorted on {r['outlier_days']} days ({r['outlier_share']:.0f}% of the "
+            f"window) when earnings collapsed. Those days are excluded from its percentile; lean on PB and dividend yield too."
+        )
 
     for rel in relatives:
         a, b = _label(rel["a"]), _label(rel["b"])
