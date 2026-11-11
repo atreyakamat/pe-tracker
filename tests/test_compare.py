@@ -140,3 +140,46 @@ def test_store_roundtrip_per_index(tmp_path):
     assert store.load_history("nifty50", tmp_path)[0]["pe"] == 20
     assert store.load_history("niftybank", tmp_path)[0]["pe"] == 15
     assert store.load_history("missing", tmp_path) == []
+
+
+# ---- outliers (earnings-collapse spikes in published PE) ------------------------------------------------
+def spiky(n=500, spikes=60, spike_pe=5000.0):
+    rows = series(n=n, base=20.0)
+    for r in rows[:spikes]:
+        r["pe"] = spike_pe
+    return rows
+
+
+def test_outliers_do_not_distort_stats():
+    clean = compute_signal(series(n=500, base=20.0))
+    dirty = compute_signal(spiky())
+    assert dirty.outlier_days == 60 and clean.outlier_days == 0
+    assert dirty.max < 100                      # the 5000s are excluded from the stats
+    assert abs(dirty.mean - clean.mean) < 1.5   # mean not dragged to hundreds
+    assert dirty.n_points == 500                # but the days are still counted as data
+
+
+def test_today_above_cap_is_100th_percentile_and_expensive():
+    rows = series(n=500, base=20.0)
+    rows[-1]["pe"] = 500.0
+    sig = compute_signal(rows)
+    assert sig.percentile == 100.0 and sig.zone == "EXPENSIVE"
+
+
+def test_relative_series_skips_outlier_days_of_either_index():
+    a, b = spiky(), series(n=500, base=20.0)
+    rel = compare.relative_series(a, b)
+    assert len(rel) == 500 - 60
+    assert max(r["premium"] for r in rel) < 100   # no 24,900% premiums
+    rel2 = compare.relative_series(b, a)
+    assert len(rel2) == 500 - 60
+
+
+def test_table_flags_distorted_index_and_insights_mention_it():
+    dirty, clean = spiky(), series(n=500, base=22.0)
+    sigs = {"smallcap250": compute_signal(dirty), "nifty50": compute_signal(clean)}
+    comp = compare.build_compare({"smallcap250": dirty, "nifty50": clean}, sigs)
+    row = next(r for r in comp["table"] if r["key"] == "smallcap250")
+    assert row["outlier_days"] == 60 and row["outlier_share"] > 10
+    assert any("distorted" in t and "Smallcap" in t for t in comp["insights"])
+    assert not any("distorted" in t and "Nifty 50" in t for t in comp["insights"])

@@ -44,6 +44,7 @@ jobs:
         run: python -m tracker.run daily ${{ inputs.always_notify && '--always-notify' || '' }}
 
       - name: Commit updated data
+        if: ${{ !cancelled() }}
         run: |
           git config user.name "pe-tracker-bot"
           git config user.email "pe-tracker-bot@users.noreply.github.com"

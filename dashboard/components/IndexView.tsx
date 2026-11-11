@@ -46,9 +46,16 @@ export default function IndexView() {
     return rows ? sliceRange(rows, days) : [];
   }, [rows, range]);
   const bins = useMemo(() => (rows ? histogram(rows) : []), [rows]);
+  // Days flagged as earnings-collapse outliers are left as gaps, never plotted as spikes.
+  const plotted = useMemo(
+    () => visible.map((r) => ({ ...r, pe: stats && r.pe > stats.capPe ? null : r.pe })),
+    [visible, stats],
+  );
+  const hiddenInView = useMemo(() => (stats ? visible.filter((r) => r.pe > stats.capPe).length : 0), [visible, stats]);
   const deviation = useMemo(() => {
     if (!stats) return [];
     return visible.map((r) => {
+      if (r.pe > stats.capPe) return { date: r.date, above: null, below: null, d: null };
       const d = ((r.pe - stats.median) / stats.median) * 100;
       return { date: r.date, above: Math.max(d, 0), below: Math.min(d, 0), d };
     });
@@ -166,7 +173,7 @@ export default function IndexView() {
       {/* Main PE chart */}
       <div className="card mt-3 p-4">
         <ResponsiveContainer width="100%" height={380}>
-          <ComposedChart data={visible} margin={{ top: 12, right: 96, bottom: 4, left: 0 }}>
+          <ComposedChart data={plotted} margin={{ top: 12, right: 96, bottom: 4, left: 0 }}>
             <CartesianGrid stroke="var(--grid)" vertical={false} />
             <XAxis dataKey="date" tickFormatter={fmtDate} minTickGap={56} tickLine={false} axisLine={{ stroke: "var(--axis)" }} tick={{ className: "axis-tick" }} />
             <YAxis domain={[(min: number) => Math.floor(min) - 1, (max: number) => Math.ceil(max) + 1]} allowDecimals={false} tickFormatter={(v) => Number(v).toFixed(0)} tickLine={false} axisLine={false} width={36} tick={{ className: "axis-tick" }} />
@@ -179,7 +186,11 @@ export default function IndexView() {
             <Line type="monotone" dataKey="pe" stroke="var(--series-1)" strokeWidth={2} dot={false} activeDot={{ r: 5, stroke: "var(--surface)", strokeWidth: 2 }} isAnimationActive={false} />
           </ComposedChart>
         </ResponsiveContainer>
-        <p className="mt-2 text-xs text-[var(--text-muted)]">Bands use the 25th / 75th percentile of the last 10 years, the same rule that triggers your Telegram alert.</p>
+        <p className="mt-2 text-xs text-[var(--text-muted)]">Bands use the 25th / 75th percentile of the last 10 years, the same rule that triggers your Telegram alert.
+          {stats.outlierDays > 0 && (
+            <> {stats.outlierDays} day{stats.outlierDays === 1 ? "" : "s"} in the 10-year window ({hiddenInView} in this view) had PE above {stats.capPe.toFixed(0)} because earnings briefly collapsed. They are left out of the line and the statistics.</>
+          )}
+        </p>
       </div>
 
       {/* Fluctuation: distance from median */}
