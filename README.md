@@ -52,6 +52,7 @@ pip install -r requirements.txt
 python -m pytest -q
 python -m tracker.run demo          # SYNTHETIC data in data/demo/ to preview the UI (git-ignored)
 python -m tracker.run backfill --only nifty50,midcap150   # backfill selected indices
+python -m tracker.run probe        # test one live fetch from each source and print what came back
 cd dashboard && npm install && npm run dev
 ```
 

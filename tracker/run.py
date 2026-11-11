@@ -2,6 +2,7 @@
 
   python -m tracker.run backfill [--years 12] [--only nifty50,midcap150]
   python -m tracker.run daily [--always-notify]
+  python -m tracker.run probe [--index nifty50]   # test one live fetch and print what came back
   python -m tracker.run demo        # SYNTHETIC data into data/demo/ for UI preview only
 """
 from __future__ import annotations
@@ -110,6 +111,21 @@ def cmd_daily(always_notify: bool) -> None:
         raise SystemExit(1)
 
 
+def cmd_probe(index_key: str) -> None:
+    """Fetch the last 30 days for one index from each source and print the outcome. For debugging."""
+    idx = BY_KEY[index_key]
+    end = date.today()
+    for label, call in (
+        ("niftyindices", lambda: fetch.fetch_niftyindices(end - timedelta(days=30), end, idx.name)),
+        ("nse allIndices", lambda: [fetch.fetch_nse_today(idx.name)]),
+    ):
+        try:
+            rows = call()
+            print(f"{label}: OK, {len(rows)} rows, latest {rows[-1] if rows else None}")
+        except Exception as e:  # noqa: BLE001
+            print(f"{label}: FAILED {e}")
+
+
 def _alert_text(msg: str) -> None:
     print(msg, file=sys.stderr)
     try:
@@ -169,12 +185,16 @@ def main() -> None:
     b.add_argument("--only", default=None, help="comma-separated index keys")
     d = sub.add_parser("daily")
     d.add_argument("--always-notify", action="store_true")
+    pr = sub.add_parser("probe")
+    pr.add_argument("--index", default="nifty50", choices=list(BY_KEY))
     sub.add_parser("demo")
     a = p.parse_args()
     if a.cmd == "backfill":
         cmd_backfill(a.years, a.only)
     elif a.cmd == "daily":
         cmd_daily(a.always_notify)
+    elif a.cmd == "probe":
+        cmd_probe(a.index)
     else:
         cmd_demo()
 

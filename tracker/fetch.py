@@ -15,7 +15,17 @@ from typing import Any
 import requests
 
 INDEX_NAME = "NIFTY 50"
-NIFTYINDICES_URL = "https://www.niftyindices.com/Backpage.aspx/getpepbHistoricalDataDBtoJSON"
+# Endpoint name and body format match what the niftyindices.com historical-data page itself sends
+# (also used by the NSEPython library). The name is case-sensitive: a wrong one returns an HTML
+# error page, not JSON.
+NIFTYINDICES_URL = "https://niftyindices.com/Backpage.aspx/getpepbHistoricaldataDBtoString"
+NIFTYINDICES_HEADERS = {
+    "Accept": "application/json, text/javascript, */*; q=0.01",
+    "Content-Type": "application/json; charset=UTF-8",
+    "X-Requested-With": "XMLHttpRequest",
+    "Origin": "https://niftyindices.com",
+    "Referer": "https://niftyindices.com/reports/historical-data",
+}
 NSE_HOME = "https://www.nseindia.com"
 NSE_ALL_INDICES = "https://www.nseindia.com/api/allIndices"
 HEADERS = {
@@ -84,26 +94,27 @@ def fetch_niftyindices(
     cursor = start
     while cursor <= end:
         chunk_end = min(cursor + timedelta(days=CHUNK_DAYS), end)
-        cinfo = {
-            "name": index_name,
-            "startDate": cursor.strftime("%d-%b-%Y"),
-            "endDate": chunk_end.strftime("%d-%b-%Y"),
-            "indexName": index_name,
-        }
+        # The server expects a single-quoted pseudo-JSON string inside the JSON body.
+        cinfo = (
+            f"{{'name':'{index_name}','startDate':'{cursor.strftime('%d-%b-%Y')}',"
+            f"'endDate':'{chunk_end.strftime('%d-%b-%Y')}','indexName':'{index_name}'}}"
+        )
         resp = s.post(
             NIFTYINDICES_URL,
-            data=json.dumps({"cinfo": json.dumps(cinfo)}),
-            headers={
-                **HEADERS,
-                "Content-Type": "application/json; charset=UTF-8",
-                "Origin": "https://www.niftyindices.com",
-                "Referer": "https://www.niftyindices.com/reports/historical-data",
-            },
+            json={"cinfo": cinfo},
+            headers={**HEADERS, **NIFTYINDICES_HEADERS},
             timeout=TIMEOUT,
         )
         if resp.status_code != 200:
-            raise FetchError(f"niftyindices HTTP {resp.status_code}")
-        for row in parse_niftyindices(resp.json()):
+            raise FetchError(f"niftyindices HTTP {resp.status_code}: {resp.text[:120]!r}")
+        try:
+            payload = resp.json()
+        except ValueError:
+            raise FetchError(
+                f"niftyindices returned non-JSON (HTTP {resp.status_code}, "
+                f"{resp.headers.get('Content-Type', '?')}): {resp.text[:150]!r}"
+            ) from None
+        for row in parse_niftyindices(payload):
             rows[row["date"]] = row
         cursor = chunk_end + timedelta(days=1)
     return [rows[k] for k in sorted(rows)]
