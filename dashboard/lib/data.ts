@@ -71,3 +71,10 @@ export type PlannerData = {
 };
 export const loadStocks = () => getJson<StocksData>("/data/stocks.json");
 export const loadPlanner = () => getJson<PlannerData>("/data/planner.json");
+
+export type MFScheme = { code: string; name: string; category: string; nav: number; date: string };
+export type MFData = { date: string; count: number; schemes: MFScheme[] };
+export type EarningsItem = { symbol: string; company: string; purpose: string; date: string };
+export type EarningsData = { date: string; horizon_days: number; count: number; items: EarningsItem[] };
+export const loadMF = () => getJson<MFData>("/data/mf.json");
+export const loadEarnings = () => getJson<EarningsData>("/data/earnings.json");

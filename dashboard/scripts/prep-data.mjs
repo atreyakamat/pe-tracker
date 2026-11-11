@@ -29,9 +29,9 @@ if (hasManifest(realDir)) {
 
 if (src) {
   const keys = JSON.parse(readFileSync(resolve(src, "indices.json"), "utf8")).map((i) => i.key);
-  for (const f of ["indices.json", "compare.json", "latest.json", "stocks.json", "planner.json", ...keys.map((k) => `${k}.json`)]) {
+  for (const f of ["indices.json", "compare.json", "latest.json", "stocks.json", "planner.json", "mf.json", "earnings.json", "planner_state.json", ...keys.map((k) => `${k}.json`)]) {
     if (existsSync(resolve(src, f))) copyFileSync(resolve(src, f), resolve(out, f));
-    else if (!["stocks.json", "planner.json"].includes(f)) console.warn(`[prep-data] missing ${f}`);
+    else if (!["stocks.json", "planner.json", "mf.json", "earnings.json", "planner_state.json"].includes(f)) console.warn(`[prep-data] missing ${f}`);
   }
 }
 writeFileSync(resolve(out, "meta.json"), JSON.stringify(meta));

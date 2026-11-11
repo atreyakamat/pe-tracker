@@ -8,6 +8,7 @@ const NAV = [
   { href: "/compare", label: "Compare" },
   { href: "/stocks", label: "Hot stocks" },
   { href: "/planner", label: "SIP planner" },
+  { href: "/money", label: "My money" },
 ];
 
 export default function Shell({ children }: { children: React.ReactNode }) {

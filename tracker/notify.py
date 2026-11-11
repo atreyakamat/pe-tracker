@@ -1,13 +1,70 @@
-"""Telegram notifications. Token/chat id come from environment variables only."""
+"""Notifications: Telegram (optional) and GitHub issues (optional). Credentials come from env vars only.
+
+In GitHub Actions, GITHUB_TOKEN/GITHUB_REPOSITORY are provided by the runner, so opening an alert issue
+needs no extra secrets — GitHub then emails the repo owner about it. Telegram works too when its two
+secrets are set. With no channel configured, the digest is only printed.
+"""
 from __future__ import annotations
 
 import os
+import sys
 
 import requests
 
 from .signal import Signal
 
 API = "https://api.telegram.org/bot{token}/sendMessage"
+GITHUB_API = "https://api.github.com/repos/{repo}/issues"
+
+
+def telegram_configured() -> bool:
+    return bool(os.environ.get("TELEGRAM_BOT_TOKEN") and os.environ.get("TELEGRAM_CHAT_ID"))
+
+
+def github_configured() -> bool:
+    return bool(os.environ.get("GITHUB_TOKEN") and os.environ.get("GITHUB_REPOSITORY"))
+
+
+def send_github_issue(title: str, body: str) -> None:
+    """Open an issue in the repo; GitHub notifies the owner by email. Token never appears in errors."""
+    token, repo = os.environ.get("GITHUB_TOKEN"), os.environ.get("GITHUB_REPOSITORY")
+    if not token or not repo:
+        raise RuntimeError("GITHUB_TOKEN and GITHUB_REPOSITORY must be set")
+    resp = requests.post(
+        GITHUB_API.format(repo=repo),
+        json={"title": title, "body": body, "labels": ["market-alert"]},
+        headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+        timeout=30,
+    )
+    if resp.status_code != 201:
+        raise RuntimeError(f"GitHub issue failed: HTTP {resp.status_code} {resp.text[:200]}")
+
+
+def send_alert(title: str, body: str) -> list[str]:
+    """Send through every configured channel.
+
+    Returns the channels that worked ([] when none is configured). Raises only when at least one
+    channel is configured and all of them fail, so the caller can retry on the next run.
+    """
+    sent: list[str] = []
+    errors: list[str] = []
+    if telegram_configured():
+        try:
+            send_telegram(body)
+            sent.append("telegram")
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"telegram: {e}")
+    if github_configured():
+        try:
+            send_github_issue(title, body)
+            sent.append("github issue")
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"github: {e}")
+    if errors and not sent:
+        raise RuntimeError("; ".join(errors))
+    for e in errors:
+        print(f"Alert channel failed (another one worked): {e}", file=sys.stderr)
+    return sent
 
 
 def format_signal(sig: Signal, prev_zone: str | None = None) -> str:

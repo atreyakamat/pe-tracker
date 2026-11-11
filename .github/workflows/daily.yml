@@ -10,12 +10,13 @@ on:
         type: boolean
         default: false
       always_notify:
-        description: "Send a Telegram message even if nothing changed"
+        description: "Send an alert even if nothing changed"
         type: boolean
         default: false
 
 permissions:
   contents: write
+  issues: write
 
 concurrency:
   group: daily-pe
@@ -41,10 +42,15 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: python -m tracker.run daily ${{ inputs.always_notify && '--always-notify' || '' }}
 
-      - name: Refresh hot stocks and SIP planner
+      - name: Refresh stocks, planner, funds and earnings
         if: ${{ !cancelled() }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: python -m tracker.run stocks
 
       - name: Commit updated data

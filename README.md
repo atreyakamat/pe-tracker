@@ -70,3 +70,10 @@ There is no official public PE API. This uses the niftyindices.com historical PE
 - Hot score = percentile ranks of 1M return (20%), 3M (30%), 6M (15%), volume surge (15%) and closeness to the 52-week high (20%). "On sale" means 15%+ below the 52-week high.
 - The planner never cuts the SIP. It adds extra money from a separate fund when Nifty 50 PE is in the BUY zone and/or Nifty is 10%/20% below its 52-week high. Backtest: the extra money earned about 1 point a year more than a plain SIP, in-sample, over mostly one rising market. Cutting the SIP when expensive lagged plain SIP and is shown as rejected.
 - No intraday signals: they need paid real-time data and most retail intraday traders lose money.
+
+## My money, index funds, results calendar and alerts
+
+- **My money** page: enter your stock holdings (Nifty 100) and index-fund units; it shows value, profit/loss, sector allocation, an opportunity-fund log with the current dip levels, and flags holdings that are 15%+ below their high or have results coming up. Everything you type stays in your browser's localStorage — nothing is uploaded. Export/Import gives you a JSON backup.
+- **Index funds**: the workflow snapshots all index-fund NAVs from AMFI's official NAVAll.txt into `data/mf.json` daily (browsers cannot call mfapi.in directly, no CORS).
+- **Results calendar**: upcoming board meetings for results in the Nifty 100 from NSE's event calendar, into `data/earnings.json`.
+- **Alerts without Telegram**: in GitHub Actions, alerts also open a GitHub issue (label `market-alert`) using the built-in token, and GitHub emails the repo owner. Telegram is now optional: if its secrets are missing the run no longer fails. With no channel at all, the digest is only printed in the run log. A SIP-planner alert fires when the extra-buy tier changes.

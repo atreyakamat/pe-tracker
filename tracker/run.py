@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import random
 import sys
@@ -101,13 +102,16 @@ def cmd_daily(always_notify: bool) -> None:
     print(f"{comp['date']}: {len(signals)} indices, failures={list(failures)}, notify={reasons or 'no'}")
     notify_error = None
     if reasons:
+        digest = notify.format_digest(comp["table"], prev_state, comp["insights"], failures, comp["date"])
         try:
-            notify.send_telegram(
-                notify.format_digest(comp["table"], prev_state, comp["insights"], failures, comp["date"])
-            )
+            sent = notify.send_alert(f"Market check {comp['date']}: {reasons[0]}", digest)
+            if sent:
+                print(f"Alert sent via {', '.join(sent)}")
+            else:
+                print("No notification channel configured; digest below.\n\n" + digest)
         except Exception as e:  # noqa: BLE001
             notify_error = e
-            print(f"Telegram notification failed: {e}", file=sys.stderr)
+            print(f"Notification failed on every channel: {e}", file=sys.stderr)
 
     if notify_error is None:
         new_state = {**prev_state}
@@ -116,28 +120,72 @@ def cmd_daily(always_notify: bool) -> None:
         store.save_state(new_state)
     # else: keep the old state so the same alert is retried on the next run.
     if notify_error is not None:
-        raise SystemExit(f"Data was updated but the Telegram notification failed: {notify_error}")
+        raise SystemExit(f"Data was updated but the notification failed: {notify_error}")
     if failures and len(failures) == len(INDICES):
         raise SystemExit(1)
 
 
 def cmd_stocks() -> None:
-    """Refresh the hot-stocks ranking and the SIP planner. Independent of the PE alerts."""
-    from . import planner, stocks
+    """Refresh hot stocks, SIP planner, index-fund NAVs and the earnings calendar. Independent of the PE alerts."""
+    from . import earnings, mf, planner, stocks
     errors = []
+    universe = None
     try:
         p = stocks.refresh()
         print(f"stocks: {p['count']} ranked as of {p['date']}, {len(p['failures'])} skipped")
-    except Exception as e:  # keep going so the planner still updates
+        universe = [{"symbol": i["symbol"]} for i in p["items"]]
+    except Exception as e:  # keep going so the rest still updates
         errors.append(f"stocks: {e}")
     try:
         p = planner.refresh()
         a = p["advice"]
         print(f"planner: zone {a['zone']}, this month Rs {a['total_amount']} (SIP {a['base_amount']} + extra {a['extra_amount']})")
+        err = _planner_tier_alert(a)
+        if err:
+            errors.append(err)
     except Exception as e:
         errors.append(f"planner: {e}")
+    try:
+        p = mf.refresh()
+        print(f"mf: {p['count']} index funds as of {p['date']}")
+    except Exception as e:
+        errors.append(f"mf: {e}")
+    try:
+        if universe is None:
+            universe = stocks.fetch_universe()
+        p = earnings.refresh(universe)
+        print(f"earnings: {p['count']} events in the next {p['horizon_days']} days")
+    except Exception as e:
+        errors.append(f"earnings: {e}")
     if errors:
         raise SystemExit("; ".join(errors))
+
+
+def _planner_tier_alert(a: dict) -> str | None:
+    """Alert when this month's extra-buy tier changes. State is saved only once the alert got out."""
+    path = store.DATA_DIR / "planner_state.json"
+    prev = json.loads(path.read_text()) if path.exists() else {}
+    changed = prev.get("extra_multiple") != a["extra_multiple"] or prev.get("zone") != a["zone"]
+    if changed and (a["extra_multiple"] > 0 or prev.get("extra_multiple", 0) > 0):
+        if a["extra_multiple"] > 0:
+            title = f"SIP planner: add Rs {a['extra_amount']} extra ({a['zone']} zone, {a['drawdown']:.0f}% off high)"
+            body = (f"The extra-buy tier changed.\n\n"
+                    f"Zone: {a['zone']} (PE percentile {a['pe_percentile']:.0f})\n"
+                    f"Nifty 50: {a['nifty']} ({a['drawdown']:.1f}% from its 52-week high of {a['high_52w']})\n"
+                    f"This month: SIP Rs {a['base_amount']} + extra Rs {a['extra_amount']} = Rs {a['total_amount']}\n\n"
+                    f"{a['note']}\nSignal only, not financial advice.")
+        else:
+            title = "SIP planner: back to the plain SIP, no extra this month"
+            body = (f"The extra-buy signal switched off.\n\nZone: {a['zone']} (PE percentile {a['pe_percentile']:.0f})\n"
+                    f"Nifty 50: {a['nifty']} ({a['drawdown']:.1f}% from its 52-week high)\n"
+                    f"This month: just the regular SIP of Rs {a['base_amount']}.\nSignal only, not financial advice.")
+        try:
+            sent = notify.send_alert(title, body)
+            print(f"planner alert sent via {', '.join(sent) if sent else 'nothing (no channel configured)'}")
+        except Exception as e:  # noqa: BLE001
+            return f"planner alert: {e}"  # state not saved, retried next run
+    store.write_json("planner_state.json", {"zone": a["zone"], "extra_multiple": a["extra_multiple"], "date": a["date"]})
+    return None
 
 
 def cmd_publish() -> None:
@@ -174,7 +222,7 @@ def cmd_probe(index_key: str) -> None:
 def _alert_text(msg: str) -> None:
     print(msg, file=sys.stderr)
     try:
-        notify.send_telegram(msg)
+        notify.send_alert("PE tracker problem", msg)
     except Exception as e:  # noqa: BLE001
         print(f"Also failed to send alert: {e}", file=sys.stderr)
 

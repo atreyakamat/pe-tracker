@@ -16,6 +16,9 @@ def history(base, n=400):
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "DATA_DIR", tmp_path)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "c")
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     sent = []
     monkeypatch.setattr(notify, "send_telegram", lambda text, *a, **k: sent.append(text))
     for i, idx in enumerate(INDICES):
@@ -51,6 +54,8 @@ def test_one_index_failing_is_reported_but_job_continues(env, monkeypatch):
 
 def test_all_fetches_failing_with_no_data_exits_nonzero_and_alerts(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "DATA_DIR", tmp_path)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "c")
     sent = []
     monkeypatch.setattr(notify, "send_telegram", lambda text, *a, **k: sent.append(text))
     monkeypatch.setattr(fetch, "fetch_latest", lambda idx, *a, **k: (_ for _ in ()).throw(fetch.FetchError("down")))
@@ -85,3 +90,36 @@ def test_telegram_failure_keeps_data_but_not_state_and_fails_the_run(env, monkey
     assert "notification failed" in str(e.value)
     assert (tmp / "compare.json").exists()        # dashboard data still published
     assert not (tmp / "state.json").exists()      # so the alert is retried next run
+
+
+def test_no_channel_configured_still_saves_state_and_passes(env, monkeypatch, capsys):
+    tmp, sent = env
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    monkeypatch.setattr(fetch, "fetch_latest", lambda idx, *a, **k: ([], "niftyindices"))
+    run.cmd_daily(always_notify=True)                       # must NOT raise
+    assert sent == [] and (tmp / "state.json").exists()
+    assert "No notification channel configured" in capsys.readouterr().out
+
+
+def test_github_issue_channel_used_when_only_github_configured(env, monkeypatch):
+    tmp, sent = env
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.setenv("GITHUB_TOKEN", "gt")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "me/repo")
+    issues = []
+    monkeypatch.setattr(notify, "send_github_issue", lambda t, b: issues.append((t, b)))
+    monkeypatch.setattr(fetch, "fetch_latest", lambda idx, *a, **k: ([], "niftyindices"))
+    run.cmd_daily(always_notify=True)
+    assert sent == [] and len(issues) == 1
+    assert "Valuation check" in issues[0][1] and (tmp / "state.json").exists()
+
+
+def test_one_channel_failing_is_fine_if_the_other_works(env, monkeypatch):
+    tmp, sent = env
+    monkeypatch.setenv("GITHUB_TOKEN", "gt")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "me/repo")
+    monkeypatch.setattr(notify, "send_github_issue", lambda t, b: (_ for _ in ()).throw(RuntimeError("api down")))
+    monkeypatch.setattr(fetch, "fetch_latest", lambda idx, *a, **k: ([], "niftyindices"))
+    run.cmd_daily(always_notify=True)                       # telegram worked -> run passes, state saved
+    assert len(sent) == 1 and (tmp / "state.json").exists()
