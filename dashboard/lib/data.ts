@@ -42,3 +42,32 @@ export function relativeSeries(a: Row[], b: Row[]): { date: string; premium: num
   }
   return out;
 }
+
+export type StockItem = {
+  rank: number; symbol: string; name: string; industry: string; score: number; price: number; date: string;
+  ret_1m: number | null; ret_3m: number | null; ret_6m: number | null; ret_12m: number | null;
+  vs_200dma: number; drawdown: number; near_high: number; vol_surge: number | null;
+  uptrend: boolean; on_sale: boolean; spark: number[];
+};
+export type StocksData = {
+  date: string; universe: string; count: number; failures: string[];
+  weights: Record<string, number>; sectors: { industry: string; n: number; score: number; ret_3m: number | null }[];
+  items: StockItem[];
+};
+export type Strat = { paid: number; value: number; multiple: number; xirr: number | null; cash_left: number };
+export type PlannerData = {
+  advice: {
+    date: string; sip: number; zone: Zone; pe_percentile: number; base_amount: number; drawdown: number;
+    extra_multiple: number; extra_amount: number; total_amount: number; nifty: number; high_52w: number;
+    zone_extra: number; max_extra: number; note: string;
+    dip_levels: { drawdown: number; extra: number; nifty_level: number }[];
+  };
+  backtest: {
+    from: string; to: string; months: number; sip: number;
+    summary: { plain: Strat; scaled: Strat; core_plus: Strat };
+    extra: { paid: number; value: number; buys: number; xirr: number | null };
+    series: { date: string; paid: number; paid_plus: number; plain: number; scaled: number; core_plus: number }[];
+  };
+};
+export const loadStocks = () => getJson<StocksData>("/data/stocks.json");
+export const loadPlanner = () => getJson<PlannerData>("/data/planner.json");

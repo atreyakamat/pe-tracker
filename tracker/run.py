@@ -121,6 +121,25 @@ def cmd_daily(always_notify: bool) -> None:
         raise SystemExit(1)
 
 
+def cmd_stocks() -> None:
+    """Refresh the hot-stocks ranking and the SIP planner. Independent of the PE alerts."""
+    from . import planner, stocks
+    errors = []
+    try:
+        p = stocks.refresh()
+        print(f"stocks: {p['count']} ranked as of {p['date']}, {len(p['failures'])} skipped")
+    except Exception as e:  # keep going so the planner still updates
+        errors.append(f"stocks: {e}")
+    try:
+        p = planner.refresh()
+        a = p["advice"]
+        print(f"planner: zone {a['zone']}, this month Rs {a['total_amount']} (SIP {a['base_amount']} + extra {a['extra_amount']})")
+    except Exception as e:
+        errors.append(f"planner: {e}")
+    if errors:
+        raise SystemExit("; ".join(errors))
+
+
 def cmd_publish() -> None:
     """Rebuild latest/compare/indices JSON from stored history. No fetching, no notifications."""
     histories, signals = {}, {}
@@ -212,6 +231,7 @@ def main() -> None:
     d = sub.add_parser("daily")
     d.add_argument("--always-notify", action="store_true")
     sub.add_parser("publish")
+    sub.add_parser("stocks")
     pr = sub.add_parser("probe")
     pr.add_argument("--index", default="nifty50", choices=list(BY_KEY))
     sub.add_parser("demo")
@@ -222,6 +242,8 @@ def main() -> None:
         cmd_daily(a.always_notify)
     elif a.cmd == "publish":
         cmd_publish()
+    elif a.cmd == "stocks":
+        cmd_stocks()
     elif a.cmd == "probe":
         cmd_probe(a.index)
     else:

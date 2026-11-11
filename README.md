@@ -63,3 +63,10 @@ cd dashboard && npm install && npm run dev
 There is no official public PE API. This uses the niftyindices.com historical PE/PB/dividend-yield endpoint (`/BackPage/getpepbHistoricaldataDBtoString`), which is what stored history comes from. It is unofficial and can change or block cloud IPs. The NSE `allIndices` endpoint is only used by `python -m tracker.run probe` as a live check, never for stored history, because during market hours it reports the previous day's PE under today's date.
 
 **Outliers:** when an index's earnings briefly collapse, the published PE spikes (Smallcap 250 once printed 44,711). Days with PE above 3x the window median are excluded from percentiles, bands, charts and comparisons, and indices with 3%+ such days (Midcap 150, Smallcap 250) get a warning mark: lean on PB and dividend yield for those. Raw data is kept as published.
+
+## Hot stocks and SIP planner
+
+- `python -m tracker.run stocks` ranks the Nifty 100 (which contains the Sensex 30) by momentum and volume, and rebuilds the SIP planner. The daily workflow runs it after the PE check. Prices come from Yahoo Finance, constituents from niftyindices. There is no free per-stock PE history, so the ranking says what is hot, not what is cheap.
+- Hot score = percentile ranks of 1M return (20%), 3M (30%), 6M (15%), volume surge (15%) and closeness to the 52-week high (20%). "On sale" means 15%+ below the 52-week high.
+- The planner never cuts the SIP. It adds extra money from a separate fund when Nifty 50 PE is in the BUY zone and/or Nifty is 10%/20% below its 52-week high. Backtest: the extra money earned about 1 point a year more than a plain SIP, in-sample, over mostly one rising market. Cutting the SIP when expensive lagged plain SIP and is shown as rejected.
+- No intraday signals: they need paid real-time data and most retail intraday traders lose money.

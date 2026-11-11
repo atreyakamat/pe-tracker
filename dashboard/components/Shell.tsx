@@ -6,6 +6,8 @@ import { usePathname } from "next/navigation";
 const NAV = [
   { href: "/", label: "Overview" },
   { href: "/compare", label: "Compare" },
+  { href: "/stocks", label: "Hot stocks" },
+  { href: "/planner", label: "SIP planner" },
 ];
 
 export default function Shell({ children }: { children: React.ReactNode }) {
