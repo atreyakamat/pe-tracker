@@ -1,0 +1,42 @@
+{
+  "nifty50": {
+    "zone": "BUY",
+    "date": "2026-11-12",
+    "source": "niftyindices"
+  },
+  "niftynext50": {
+    "zone": "BUY",
+    "date": "2026-11-12",
+    "source": "niftyindices"
+  },
+  "nifty100": {
+    "zone": "BUY",
+    "date": "2026-11-12",
+    "source": "niftyindices"
+  },
+  "nifty500": {
+    "zone": "BUY",
+    "date": "2026-11-12",
+    "source": "niftyindices"
+  },
+  "midcap150": {
+    "zone": "NEUTRAL",
+    "date": "2026-11-12",
+    "source": "niftyindices"
+  },
+  "smallcap250": {
+    "zone": "NEUTRAL",
+    "date": "2026-11-12",
+    "source": "niftyindices"
+  },
+  "niftybank": {
+    "zone": "BUY",
+    "date": "2026-11-12",
+    "source": "niftyindices"
+  },
+  "niftyit": {
+    "zone": "BUY",
+    "date": "2026-11-12",
+    "source": "niftyindices"
+  }
+}
